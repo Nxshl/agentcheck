@@ -1,22 +1,17 @@
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import { useAppData } from "../context/AppContext";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
 export default function Leaderboard() {
-  const stats = useQuery(api.records.getStats);
-
-  const top10 = (stats ?? []).slice(0, 10);
-
+  const { stats } = useAppData();
+  const top10 = stats.slice(0, 10);
   const maxScore = top10[0] ? top10[0].rejected + top10[0].ignored : 1;
 
   return (
     <div className="box">
       <div className="box-header">
         <span className="tag accent">// TOP_10_AGENTS</span>
-        <span className="text-muted ml-auto" style={{ fontSize: "0.62rem" }}>
-          sorted by rej + ign
-        </span>
+        <span className="text-muted ml-auto" style={{ fontSize: "0.62rem" }}>sorted by rej + ign</span>
       </div>
       <div className="box-body" style={{ padding: 0 }}>
         {top10.length === 0 ? (
@@ -34,26 +29,15 @@ export default function Leaderboard() {
                   <div className="lb-rank">
                     {idx < 3 ? MEDALS[idx] : <span className="lb-num">{idx + 1}</span>}
                   </div>
-
                   <div className="lb-info">
-                    <div className="lb-name" title={agent.agent}>
-                      {agent.agent}
-                    </div>
+                    <div className="lb-name" title={agent.agent}>{agent.agent}</div>
                     <div className="lb-bar-wrap">
-                      <div
-                        className="lb-bar"
-                        style={{ width: `${pct}%` }}
-                      />
+                      <div className="lb-bar" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
-
                   <div className="lb-scores">
-                    <span className="lb-tag lb-rej" title="Rejected">
-                      {agent.rejected}R
-                    </span>
-                    <span className="lb-tag lb-ign" title="Ignored">
-                      {agent.ignored}I
-                    </span>
+                    <span className="lb-tag lb-rej">{agent.rejected}R</span>
+                    <span className="lb-tag lb-ign">{agent.ignored}I</span>
                   </div>
                 </div>
               );

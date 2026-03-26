@@ -1,9 +1,7 @@
 import { useState } from "react";
 import { useDropzone } from "react-dropzone";
 import Papa from "papaparse";
-import { useMutation, useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
+import { useAppData, deriveFlags } from "../context/AppContext";
 
 interface ParsedRow {
   campaign: string;
@@ -12,35 +10,21 @@ interface ParsedRow {
   posthog: string;
 }
 
-// Mirror the classification logic from the backend for preview badges
 function previewFlag(posthog: string) {
-  const l = posthog.toLowerCase();
-  if (l.includes("reject") || l.includes("decline")) return "rejected";
-  if (
-    l.includes("ignor") ||
-    l.includes("not answered") ||
-    l.includes("no answer") ||
-    l.includes("unanswered") ||
-    l.includes("not answer") ||
-    l.includes("busy")
-  )
-    return "ignored";
+  const f = deriveFlags(posthog);
+  if (f.isRejected) return "rejected";
+  if (f.isIgnored) return "ignored";
   return "ok";
 }
 
 export default function CSVUpload() {
+  const { importBatch, batches, deleteBatch } = useAppData();
   const [preview, setPreview] = useState<ParsedRow[]>([]);
   const [filename, setFilename] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-
-  const createBatch = useMutation(api.records.createBatch);
-  const insertBatchChunk = useMutation(api.records.insertBatchChunk);
-  const deleteBatch = useMutation(api.records.deleteBatch);
-  const batches = useQuery(api.records.getBatches);
 
   const onDrop = (files: File[]) => {
     setError(null);
@@ -53,8 +37,7 @@ export default function CSVUpload() {
       skipEmptyLines: true,
       complete: (result) => {
         const rows = result.data as string[][];
-        const data =
-          rows[0]?.[0]?.toLowerCase().includes("number") ? rows.slice(1) : rows;
+        const data = rows[0]?.[0]?.toLowerCase().includes("number") ? rows.slice(1) : rows;
         const parsed = data.map((row) => ({
           number: row[0]?.trim() ?? "",
           campaign: row[1]?.trim() ?? "",
@@ -73,16 +56,11 @@ export default function CSVUpload() {
     multiple: false,
   });
 
-  const handleImport = async () => {
+  const handleImport = () => {
     if (!preview.length) return;
     setLoading(true);
     try {
-      // Create ONE batch record for the whole file
-      const batchId = await createBatch({ filename, rowCount: preview.length });
-      // Insert all rows in chunks of 50 under that batchId
-      for (let i = 0; i < preview.length; i += 50) {
-        await insertBatchChunk({ batchId, rows: preview.slice(i, i + 50) });
-      }
+      importBatch(filename, preview);
       setDone(true);
       setPreview([]);
       setFilename("");
@@ -100,33 +78,16 @@ export default function CSVUpload() {
     setFilename("");
   };
 
-  const handleDeleteBatch = async (batchId: Id<"batches">) => {
-    setDeletingId(batchId);
-    setConfirmDeleteId(null);
-    try {
-      await deleteBatch({ batchId });
-    } catch (e) {
-      console.error("Delete batch failed:", e);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
   function statusBadge(posthog: string) {
     const flag = previewFlag(posthog);
-    if (flag === "rejected")
-      return <span className="badge badge-rejected">rejected</span>;
-    if (flag === "ignored")
-      return <span className="badge badge-ignored">ignored</span>;
+    if (flag === "rejected") return <span className="badge badge-rejected">rejected</span>;
+    if (flag === "ignored") return <span className="badge badge-ignored">ignored</span>;
     return <span className="badge badge-ok">—</span>;
   }
 
   function formatDate(ts: number) {
     return new Date(ts).toLocaleString("en-IN", {
-      day: "2-digit",
-      month: "short",
-      hour: "2-digit",
-      minute: "2-digit",
+      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
     });
   }
 
@@ -140,47 +101,24 @@ export default function CSVUpload() {
           )}
         </div>
         <div className="box-body">
-          <div
-            {...getRootProps()}
-            className={`dropzone${isDragActive ? " active" : ""}`}
-          >
+          <div {...getRootProps()} className={`dropzone${isDragActive ? " active" : ""}`}>
             <input {...getInputProps()} />
             <div className="dz-icon">⌃</div>
-            <p>
-              Drop your CSV file here
-              <br />
-              or click to browse
-            </p>
+            <p>Drop your CSV file here<br />or click to browse</p>
             <p className="dz-hint">
-              Cols: Number, Campaign, Agent, Ended By, RB, Ring Time, Call Flow,{" "}
-              <strong>Posthog</strong>
+              Cols: Number, Campaign, Agent, Ended By, RB, Ring Time, Call Flow, <strong>Posthog</strong>
             </p>
           </div>
 
-          {error && (
-            <p style={{ color: "var(--rejected)", fontSize: "0.75rem", marginTop: "10px" }}>
-              ✕ {error}
-            </p>
-          )}
-          {done && (
-            <p style={{ color: "var(--accent)", fontSize: "0.75rem", marginTop: "10px" }}>
-              ✓ Import complete — {filename}
-            </p>
-          )}
+          {error && <p style={{ color: "var(--rejected)", fontSize: "0.75rem", marginTop: "10px" }}>✕ {error}</p>}
+          {done && <p style={{ color: "var(--accent)", fontSize: "0.75rem", marginTop: "10px" }}>✓ Import complete — {filename}</p>}
 
           {preview.length > 0 && (
             <>
               <div className="preview-wrap">
                 <table className="data-table">
                   <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Campaign</th>
-                      <th>Agent</th>
-                      <th>Number</th>
-                      <th>Posthog</th>
-                      <th>Status</th>
-                    </tr>
+                    <tr><th>#</th><th>Campaign</th><th>Agent</th><th>Number</th><th>Posthog</th><th>Status</th></tr>
                   </thead>
                   <tbody>
                     {preview.slice(0, 10).map((row, i) => (
@@ -189,44 +127,28 @@ export default function CSVUpload() {
                         <td>{row.campaign || "—"}</td>
                         <td style={{ color: "var(--accent2)" }}>{row.agent || "—"}</td>
                         <td>{row.number || "—"}</td>
-                        <td title={row.posthog}>
-                          {row.posthog.slice(0, 30)}
-                          {row.posthog.length > 30 ? "…" : ""}
-                        </td>
+                        <td title={row.posthog}>{row.posthog.slice(0, 30)}{row.posthog.length > 30 ? "…" : ""}</td>
                         <td>{statusBadge(row.posthog)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
                 {preview.length > 10 && (
-                  <p className="text-muted mt-12">
-                    + {preview.length - 10} more rows (not shown in preview)
-                  </p>
+                  <p className="text-muted mt-12">+ {preview.length - 10} more rows (not shown)</p>
                 )}
               </div>
               <div className="flex-row mt-16">
-                <button
-                  className="btn btn-primary"
-                  onClick={handleImport}
-                  disabled={loading}
-                >
+                <button className="btn btn-primary" onClick={handleImport} disabled={loading}>
                   {loading ? "Importing…" : `Import ${preview.length} Rows`}
                 </button>
-                <button
-                  className="btn btn-ghost"
-                  onClick={handleDiscard}
-                  disabled={loading}
-                >
-                  Discard
-                </button>
+                <button className="btn btn-ghost" onClick={handleDiscard} disabled={loading}>Discard</button>
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Import History */}
-      {batches && batches.length > 0 && (
+      {batches.length > 0 && (
         <div className="box">
           <div className="box-header">
             <span className="tag">// IMPORT_HISTORY</span>
@@ -235,29 +157,23 @@ export default function CSVUpload() {
           <div className="box-body" style={{ padding: 0 }}>
             <table className="data-table">
               <thead>
-                <tr>
-                  <th>File</th>
-                  <th>Rows</th>
-                  <th>Imported</th>
-                  <th></th>
-                </tr>
+                <tr><th>File</th><th>Rows</th><th>Imported</th><th></th></tr>
               </thead>
               <tbody>
                 {batches.map((b) => (
-                  <tr key={b._id}>
+                  <tr key={b.id}>
                     <td style={{ color: "var(--accent2)" }}>{b.filename}</td>
                     <td>{b.rowCount}</td>
                     <td style={{ color: "var(--muted)" }}>{formatDate(b.importedAt)}</td>
                     <td>
-                      {confirmDeleteId === b._id ? (
+                      {confirmDeleteId === b.id ? (
                         <span className="flex-row">
                           <button
                             className="btn btn-danger"
                             style={{ padding: "3px 8px", fontSize: "0.6rem" }}
-                            disabled={deletingId === b._id}
-                            onClick={() => handleDeleteBatch(b._id)}
+                            onClick={() => { deleteBatch(b.id); setConfirmDeleteId(null); }}
                           >
-                            {deletingId === b._id ? "…" : "Confirm"}
+                            Confirm
                           </button>
                           <button
                             className="btn btn-ghost"
@@ -271,8 +187,7 @@ export default function CSVUpload() {
                         <button
                           className="btn btn-danger"
                           style={{ padding: "3px 8px", fontSize: "0.6rem" }}
-                          disabled={!!deletingId}
-                          onClick={() => setConfirmDeleteId(b._id)}
+                          onClick={() => setConfirmDeleteId(b.id)}
                         >
                           Delete
                         </button>
